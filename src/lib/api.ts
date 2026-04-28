@@ -14,10 +14,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function requestNoContent(path: string, options?: RequestInit): Promise<void> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+    ...options,
+  })
+  if (!response.ok) {
+    throw new Error(`API error ${response.status}: ${response.statusText}`)
+  }
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  delete: (path: string) =>
+    requestNoContent(path, { method: 'DELETE' }),
 }
 
 // ---------------------------------------------------------------------------
@@ -208,4 +223,84 @@ export const brokerageApi = {
     api.get<TradeHistoryResponse>(
       `/api/v1/brokerage/trades?page=${page}&page_size=${pageSize}`,
     ),
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist types
+// ---------------------------------------------------------------------------
+
+export interface WatchlistItem {
+  id: string
+  symbol: string
+  name: string | null
+  notes: string | null
+  added_at: string
+}
+
+export interface WatchlistListResponse {
+  items: WatchlistItem[]
+  total: number
+}
+
+export interface WatchlistAddRequest {
+  symbol: string
+  name?: string | null
+  notes?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist API helpers
+// ---------------------------------------------------------------------------
+
+export const watchlistApi = {
+  list: (): Promise<WatchlistListResponse> =>
+    api.get<WatchlistListResponse>('/api/v1/watchlist'),
+
+  add: (body: WatchlistAddRequest): Promise<WatchlistItem> =>
+    api.post<WatchlistItem>('/api/v1/watchlist', body),
+
+  remove: (symbol: string): Promise<void> =>
+    api.delete(`/api/v1/watchlist/${encodeURIComponent(symbol)}`),
+}
+
+// ---------------------------------------------------------------------------
+// Signals types
+// ---------------------------------------------------------------------------
+
+export type SignalAction = 'BUY' | 'SELL' | 'HOLD'
+
+export interface SignalOut {
+  id: string
+  symbol: string
+  action: SignalAction
+  confidence: number
+  rationale: string
+  price_at_signal: number
+  model_id: string
+  generated_at: string
+}
+
+export interface LatestSignalsResponse {
+  signals: SignalOut[]
+  total: number
+}
+
+export interface GenerateSignalResponse {
+  signals: SignalOut[]
+  errors: Record<string, string>
+}
+
+// ---------------------------------------------------------------------------
+// Signals API helpers
+// ---------------------------------------------------------------------------
+
+export const signalsApi = {
+  getLatest: (): Promise<LatestSignalsResponse> =>
+    api.get<LatestSignalsResponse>('/api/v1/signals/latest'),
+
+  generate: (symbols: string[]): Promise<GenerateSignalResponse> =>
+    api.post<GenerateSignalResponse>('/api/v1/signals/generate', { symbols }),
+
+  getLatestForSymbol: (symbol: string): Promise<SignalOut> =>
+    api.get<SignalOut>(`/api/v1/signals/latest/${encodeURIComponent(symbol)}`),
 }
