@@ -4,6 +4,11 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY . .
+# VITE_API_URL is a build-time variable baked into the JS bundle by Vite.
+# Pass it via --build-arg to set the backend API URL for the compiled output.
+# Leave empty to use same-origin requests (works with an upstream reverse proxy).
+ARG VITE_API_URL=""
+ENV VITE_API_URL="${VITE_API_URL}"
 RUN npm run build
 
 # Serve stage
