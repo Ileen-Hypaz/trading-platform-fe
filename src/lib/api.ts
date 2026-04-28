@@ -31,6 +31,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  patch: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (path: string) =>
     requestNoContent(path, { method: 'DELETE' }),
 }
@@ -303,4 +305,89 @@ export const signalsApi = {
 
   getLatestForSymbol: (symbol: string): Promise<SignalOut> =>
     api.get<SignalOut>(`/api/v1/signals/latest/${encodeURIComponent(symbol)}`),
+}
+
+// ---------------------------------------------------------------------------
+// Auto-trading types
+// ---------------------------------------------------------------------------
+
+export interface AutoTradingStatus {
+  enabled: boolean
+  paused: boolean
+  pause_expires_in_seconds: number | null
+}
+
+export interface AutoTradingToggleResponse {
+  enabled: boolean
+  updated_at: string
+}
+
+export interface AutoTradeLogEntry {
+  id: string
+  run_id: string
+  portfolio_id: string | null
+  signal_id: string | null
+  symbol: string
+  action: string
+  qty: number | null
+  price: number | null
+  outcome: string
+  reason: string | null
+  created_at: string
+}
+
+export interface AutoTradeLogsResponse {
+  logs: AutoTradeLogEntry[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// ---------------------------------------------------------------------------
+// Auto-trading API helpers
+// ---------------------------------------------------------------------------
+
+export const autoTradingApi = {
+  getStatus: (): Promise<AutoTradingStatus> =>
+    api.get<AutoTradingStatus>('/api/v1/auto-trading/status'),
+
+  toggle: (enabled: boolean): Promise<AutoTradingToggleResponse> =>
+    api.patch<AutoTradingToggleResponse>('/api/v1/auto-trading/toggle', { enabled }),
+
+  getLogs: (page: number = 1, pageSize: number = 50): Promise<AutoTradeLogsResponse> =>
+    api.get<AutoTradeLogsResponse>(
+      `/api/v1/auto-trading/logs?page=${page}&page_size=${pageSize}`,
+    ),
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails types
+// ---------------------------------------------------------------------------
+
+export interface RuleConfigOut {
+  rule_name: string
+  value: number
+  enabled: boolean
+  description: string | null
+  updated_at: string
+}
+
+export interface RuleConfigUpdate {
+  value?: number
+  enabled?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails API helpers
+// ---------------------------------------------------------------------------
+
+export const guardrailsApi = {
+  listRules: (): Promise<RuleConfigOut[]> =>
+    api.get<RuleConfigOut[]>('/api/v1/guardrails/rules'),
+
+  updateRule: (ruleName: string, body: RuleConfigUpdate): Promise<RuleConfigOut> =>
+    api.patch<RuleConfigOut>(
+      `/api/v1/guardrails/rules/${encodeURIComponent(ruleName)}`,
+      body,
+    ),
 }
