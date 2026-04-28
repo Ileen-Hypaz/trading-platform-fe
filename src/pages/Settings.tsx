@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { ErrorBanner } from '../components/ErrorBanner'
+import { SkeletonLine, SkeletonTableRow } from '../components/Skeleton'
+import { useToast } from '../components/Toast'
 import {
   autoTradingApi,
   guardrailsApi,
@@ -178,6 +181,9 @@ function AutoTradingPanel() {
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [toggling, setToggling] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { addToast } = useToast()
+  // Ensure the "paused" toast fires at most once per mount
+  const pausedToastFiredRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -200,14 +206,36 @@ function AutoTradingPanel() {
     }
   }, [])
 
+  // Fire a toast once when the paused state is first detected
+  useEffect(() => {
+    if (status?.paused && !pausedToastFiredRef.current) {
+      pausedToastFiredRef.current = true
+      addToast({
+        type: 'warning',
+        title: 'Auto-Trading Paused',
+        message: 'Daily loss cap reached. Auto-trading will not execute further trades today.',
+        duration: 8000,
+      })
+    }
+  }, [status?.paused, addToast])
+
   async function handleToggle(val: boolean) {
     setToggling(true)
     setError(null)
     try {
       const result = await autoTradingApi.toggle(val)
       setStatus((prev) => (prev ? { ...prev, enabled: result.enabled } : null))
+      addToast({
+        type: result.enabled ? 'success' : 'info',
+        title: result.enabled ? 'Auto-Trading Enabled' : 'Auto-Trading Disabled',
+        message: result.enabled
+          ? 'The scheduler will execute trades automatically on each trigger.'
+          : 'No trades will be executed automatically until re-enabled.',
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update auto-trading state')
+      const message = err instanceof Error ? err.message : 'Failed to update auto-trading state'
+      setError(message)
+      addToast({ type: 'error', title: 'Update Failed', message })
     } finally {
       setToggling(false)
     }
@@ -225,6 +253,7 @@ function AutoTradingPanel() {
             viewBox="0 0 24 24"
             strokeWidth="1.5"
             stroke="currentColor"
+            aria-hidden="true"
           >
             <path
               strokeLinecap="round"
@@ -252,28 +281,34 @@ function AutoTradingPanel() {
       )}
 
       {error && (
-        <div className="mb-4 px-4 py-2 bg-red-900/40 border border-red-700 rounded-lg text-red-300 text-sm">
-          {error}
-        </div>
+        <ErrorBanner type="error" message={error} className="mb-4" />
       )}
 
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-white">Enable Auto-Trading</p>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {loadingStatus
-              ? 'Loading…'
-              : status?.enabled
+      {loadingStatus ? (
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-1 space-y-2">
+            <SkeletonLine className="h-4 w-40" />
+            <SkeletonLine className="h-3 w-64" />
+          </div>
+          <SkeletonLine className="h-6 w-11 rounded-full" />
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-white">Enable Auto-Trading</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {status?.enabled
                 ? 'Active — the scheduler will execute trades automatically on each trigger.'
                 : 'Disabled — no trades will be executed automatically.'}
-          </p>
+            </p>
+          </div>
+          <ToggleSwitch
+            enabled={status?.enabled ?? false}
+            loading={toggling}
+            onChange={(val) => void handleToggle(val)}
+          />
         </div>
-        <ToggleSwitch
-          enabled={status?.enabled ?? false}
-          loading={loadingStatus || toggling}
-          onChange={(val) => void handleToggle(val)}
-        />
-      </div>
+      )}
     </section>
   )
 }
@@ -295,6 +330,7 @@ function GuardrailRulesPanel() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [formState, setFormState] = useState<Record<string, RuleFormState>>({})
+  const { addToast } = useToast()
 
   useEffect(() => {
     void guardrailsApi
@@ -368,6 +404,12 @@ function GuardrailRulesPanel() {
           error: null,
         },
       }))
+      const meta = RULE_META[ruleName]
+      addToast({
+        type: 'success',
+        title: 'Rule Saved',
+        message: `${meta?.label ?? ruleName} updated successfully.`,
+      })
       setTimeout(() => {
         setFormState((prev) => ({
           ...prev,
@@ -375,14 +417,16 @@ function GuardrailRulesPanel() {
         }))
       }, 2000)
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Save failed'
       setFormState((prev) => ({
         ...prev,
         [ruleName]: {
           ...prev[ruleName],
           saving: false,
-          error: err instanceof Error ? err.message : 'Save failed',
+          error: message,
         },
       }))
+      addToast({ type: 'error', title: 'Save Failed', message })
     }
   }
 
@@ -394,13 +438,25 @@ function GuardrailRulesPanel() {
       </p>
 
       {fetchError && (
-        <div className="mb-4 px-4 py-2 bg-red-900/40 border border-red-700 rounded-lg text-red-300 text-sm">
-          {fetchError}
-        </div>
+        <ErrorBanner type="error" message={fetchError} className="mb-4" />
       )}
 
       {loading ? (
-        <p className="text-slate-500 text-sm py-4">Loading rules…</p>
+        <div className="space-y-6 py-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 space-y-2">
+                <SkeletonLine className="h-4 w-36" />
+                <SkeletonLine className="h-3 w-52" />
+              </div>
+              <div className="flex items-center gap-3">
+                <SkeletonLine className="h-8 w-24 rounded-lg" />
+                <SkeletonLine className="h-6 w-11 rounded-full" />
+                <SkeletonLine className="h-8 w-16 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div>
           {rules.map((rule) => {
@@ -481,7 +537,7 @@ function GuardrailRulesPanel() {
                 </div>
 
                 {state.error && (
-                  <p className="text-xs text-red-400 mt-2">{state.error}</p>
+                  <ErrorBanner type="error" message={state.error} className="mt-2" />
                 )}
               </div>
             )
@@ -495,6 +551,8 @@ function GuardrailRulesPanel() {
 // ---------------------------------------------------------------------------
 // Section: Auto-Trade Activity Log
 // ---------------------------------------------------------------------------
+
+const ACTIVITY_LOG_SKELETON_ROWS = 5
 
 function ActivityLogPanel() {
   const [data, setData] = useState<AutoTradeLogsResponse | null>(null)
@@ -527,7 +585,7 @@ function ActivityLogPanel() {
 
   return (
     <section className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-      <div className="px-6 py-4 border-b border-surface-border flex items-center justify-between">
+      <div className="px-6 py-4 border-b border-surface-border flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h3 className="text-base font-semibold text-white">Auto-Trade Activity</h3>
           <p className="text-xs text-slate-500 mt-0.5">Every signal evaluation from the scheduler</p>
@@ -535,14 +593,14 @@ function ActivityLogPanel() {
         <span className="text-xs text-slate-500">Refreshes every 30s</span>
       </div>
 
-      {error && (
-        <div className="mx-6 mt-4 px-4 py-2 bg-red-900/40 border border-red-700 rounded-lg text-red-300 text-sm">
-          {error}
+      {!loading && error && (
+        <div className="mx-6 mt-4">
+          <ErrorBanner type="error" message={error} />
         </div>
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm min-w-[600px]">
           <thead>
             <tr className="border-b border-surface-border">
               <th className="text-left px-4 py-3 text-slate-400 font-medium whitespace-nowrap">
@@ -558,11 +616,9 @@ function ActivityLogPanel() {
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
-                  Loading…
-                </td>
-              </tr>
+              Array.from({ length: ACTIVITY_LOG_SKELETON_ROWS }).map((_, i) => (
+                <SkeletonTableRow key={i} cols={7} firstColWidth="w-28" />
+              ))
             ) : data && data.logs.length > 0 ? (
               data.logs.map((entry) => (
                 <tr
@@ -597,10 +653,10 @@ function ActivityLogPanel() {
               ))
             ) : (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={7} className="px-4 py-10 text-center text-slate-500 text-sm">
                   {error
                     ? 'Could not load activity log.'
-                    : 'No auto-trade activity recorded yet.'}
+                    : 'No auto-trade activity recorded yet. Enable auto-trading and wait for the next scheduled run.'}
                 </td>
               </tr>
             )}
@@ -609,7 +665,7 @@ function ActivityLogPanel() {
       </div>
 
       {data && data.total > LOG_PAGE_SIZE && (
-        <div className="flex items-center justify-between px-6 py-4 border-t border-surface-border">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-surface-border gap-4 flex-wrap">
           <p className="text-sm text-slate-400">
             Showing {(page - 1) * LOG_PAGE_SIZE + 1}–
             {Math.min(page * LOG_PAGE_SIZE, data.total)} of {data.total}
@@ -642,15 +698,17 @@ function ActivityLogPanel() {
 
 export function Settings() {
   const [brokerSaved, setBrokerSaved] = useState(false)
+  const { addToast } = useToast()
 
   function handleBrokerSave(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setBrokerSaved(true)
+    addToast({ type: 'success', title: 'Settings Saved', message: 'Broker configuration updated.' })
     setTimeout(() => setBrokerSaved(false), 2000)
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-8 space-y-6">
       <h2 className="text-2xl font-bold text-white">Settings</h2>
 
       <AutoTradingPanel />

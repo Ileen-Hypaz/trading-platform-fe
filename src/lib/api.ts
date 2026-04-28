@@ -1,5 +1,56 @@
 const BASE_URL = import.meta.env['VITE_API_URL'] ?? ''
 
+// ---------------------------------------------------------------------------
+// ApiError — richer error type that carries HTTP status + backend error code
+// ---------------------------------------------------------------------------
+
+interface ErrorResponseBody {
+  message?: string
+  error_code?: string
+}
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly errorCode: string | null
+
+  constructor(status: number, message: string, errorCode?: string | null) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.errorCode = errorCode ?? null
+  }
+
+  /**
+   * True for transient/external-service failures that may self-resolve
+   * (e.g. market data provider down, AI service unavailable, 503/504).
+   */
+  get isDegradation(): boolean {
+    return (
+      this.status >= 503 ||
+      this.errorCode === 'MARKET_DATA_UNAVAILABLE' ||
+      this.errorCode === 'AI_SERVICE_UNAVAILABLE'
+    )
+  }
+
+  /** True when a guardrail rule blocked the requested action. */
+  get isGuardrailViolation(): boolean {
+    return this.errorCode === 'GUARDRAIL_VIOLATION'
+  }
+}
+
+async function parseErrorBody(response: Response): Promise<{ message: string; errorCode: string | null }> {
+  let message = `Request failed (${response.status})`
+  let errorCode: string | null = null
+  try {
+    const body = (await response.json()) as ErrorResponseBody
+    if (body.message) message = body.message
+    if (body.error_code) errorCode = body.error_code
+  } catch {
+    // Non-JSON body; keep default message
+  }
+  return { message, errorCode }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: {
@@ -9,7 +60,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   })
   if (!response.ok) {
-    throw new Error(`API error ${response.status}: ${response.statusText}`)
+    const { message, errorCode } = await parseErrorBody(response)
+    throw new ApiError(response.status, message, errorCode)
   }
   return response.json() as Promise<T>
 }
@@ -23,7 +75,8 @@ async function requestNoContent(path: string, options?: RequestInit): Promise<vo
     ...options,
   })
   if (!response.ok) {
-    throw new Error(`API error ${response.status}: ${response.statusText}`)
+    const { message, errorCode } = await parseErrorBody(response)
+    throw new ApiError(response.status, message, errorCode)
   }
 }
 

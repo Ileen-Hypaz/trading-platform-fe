@@ -8,7 +8,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { type OHLCVBar, type Quote, marketApi } from '../lib/api'
+import { ErrorBanner } from './ErrorBanner'
+import { SkeletonChartArea } from './Skeleton'
+import { useToast } from './Toast'
+import { type OHLCVBar, type Quote, ApiError, marketApi } from '../lib/api'
 
 interface PriceChartProps {
   symbol: string
@@ -52,12 +55,38 @@ function toChartPoints(bars: OHLCVBar[], interval: string): ChartPoint[] {
   }))
 }
 
+// ---------------------------------------------------------------------------
+// Header skeleton: symbol placeholder while first load is in flight
+// ---------------------------------------------------------------------------
+
+function ChartHeaderSkeleton() {
+  return (
+    <div className="flex items-start justify-between mb-5 gap-4">
+      <div className="space-y-2">
+        <div className="animate-pulse rounded bg-slate-700/60 h-5 w-16" />
+        <div className="animate-pulse rounded bg-slate-700/60 h-8 w-28" />
+        <div className="animate-pulse rounded bg-slate-700/60 h-3 w-40" />
+      </div>
+      <div className="flex gap-1">
+        {INTERVALS.map((iv) => (
+          <div
+            key={iv}
+            className="animate-pulse rounded bg-slate-700/60 h-7 w-8"
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function PriceChart({ symbol }: PriceChartProps) {
   const [quote, setQuote] = useState<Quote | null>(null)
   const [chartData, setChartData] = useState<ChartPoint[]>([])
   const [chartInterval, setChartInterval] = useState<ChartInterval>('daily')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isDegradation, setIsDegradation] = useState(false)
+  const { addToast } = useToast()
 
   useEffect(() => {
     if (!symbol) return
@@ -65,6 +94,7 @@ export function PriceChart({ symbol }: PriceChartProps) {
     let cancelled = false
     setLoading(true)
     setError(null)
+    setIsDegradation(false)
     setQuote(null)
     setChartData([])
 
@@ -72,13 +102,23 @@ export function PriceChart({ symbol }: PriceChartProps) {
       .then(([quoteRes, histRes]) => {
         if (cancelled) return
         setQuote(quoteRes)
-        // Use histRes.interval (the actual interval confirmed by the API) so the
-        // timestamp formatter always matches the data regardless of the request param.
         setChartData(toChartPoints(histRes.bars, histRes.interval))
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Failed to load market data')
+        const message =
+          err instanceof Error ? err.message : 'Failed to load market data'
+        const degradation = err instanceof ApiError && err.isDegradation
+        setError(message)
+        setIsDegradation(degradation)
+        addToast({
+          type: 'warning',
+          title: 'Market Data Unavailable',
+          message: degradation
+            ? 'Serving cached data — live prices may be delayed.'
+            : 'Could not fetch market data. Check your connection.',
+          duration: 6000,
+        })
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -87,7 +127,7 @@ export function PriceChart({ symbol }: PriceChartProps) {
     return () => {
       cancelled = true
     }
-  }, [symbol, chartInterval])
+  }, [symbol, chartInterval, addToast])
 
   const isPositive = quote !== null ? quote.change >= 0 : true
   const accentColor = isPositive ? '#22c55e' : '#ef4444'
@@ -97,67 +137,80 @@ export function PriceChart({ symbol }: PriceChartProps) {
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl p-5">
       {/* Header: symbol + price + interval selector */}
-      <div className="flex items-start justify-between mb-5">
-        <div>
-          <h3 className="text-base font-bold text-white tracking-wide">{symbol}</h3>
-          {quote !== null && (
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-semibold text-white">
-                ${quote.price.toFixed(2)}
-              </span>
-              <span
-                className={`text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}
-              >
-                {changeSign}
-                {quote.change.toFixed(2)} ({changeSign}
-                {quote.change_percent.toFixed(2)}%)
-              </span>
-            </div>
-          )}
-          {quote !== null && (
-            <p className="text-xs text-slate-500 mt-0.5">
-              Vol {quote.volume.toLocaleString()} · {quote.latest_trading_day}
-            </p>
-          )}
-        </div>
+      {loading && !quote ? (
+        <ChartHeaderSkeleton />
+      ) : (
+        <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
+          <div>
+            <h3 className="text-base font-bold text-white tracking-wide">{symbol}</h3>
+            {quote !== null && (
+              <div className="flex items-baseline gap-2 mt-1 flex-wrap">
+                <span className="text-2xl font-semibold text-white">
+                  ${quote.price.toFixed(2)}
+                </span>
+                <span
+                  className={`text-sm font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}
+                >
+                  {changeSign}
+                  {quote.change.toFixed(2)} ({changeSign}
+                  {quote.change_percent.toFixed(2)}%)
+                </span>
+              </div>
+            )}
+            {quote !== null && (
+              <p className="text-xs text-slate-500 mt-0.5">
+                Vol {quote.volume.toLocaleString()} · {quote.latest_trading_day}
+              </p>
+            )}
+          </div>
 
-        <div className="flex gap-1">
-          {INTERVALS.map((iv) => (
-            <button
-              key={iv}
-              onClick={() => setChartInterval(iv)}
-              className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
-                chartInterval === iv
-                  ? 'bg-primary-600 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-surface-border'
-              }`}
-            >
-              {INTERVAL_LABELS[iv]}
-            </button>
-          ))}
+          <div className="flex gap-1 shrink-0">
+            {INTERVALS.map((iv) => (
+              <button
+                key={iv}
+                onClick={() => setChartInterval(iv)}
+                className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
+                  chartInterval === iv
+                    ? 'bg-primary-600 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-surface-border'
+                }`}
+              >
+                {INTERVAL_LABELS[iv]}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Degradation warning banner */}
+      {!loading && error !== null && isDegradation && (
+        <ErrorBanner
+          type="warning"
+          message="Market data is temporarily degraded — chart may show cached values."
+          className="mb-4"
+        />
+      )}
 
       {/* Chart body */}
-      {loading && (
+      {loading && <SkeletonChartArea />}
+
+      {!loading && error !== null && !isDegradation && (
+        <div className="h-52 flex items-center justify-center">
+          <ErrorBanner
+            type="error"
+            message={error}
+            className="w-full max-w-sm text-center"
+          />
+        </div>
+      )}
+
+      {!loading && (error === null || isDegradation) && chartData.length === 0 && (
         <div className="h-52 flex items-center justify-center text-slate-400 text-sm">
-          Loading…
+          No chart data available for {symbol}
         </div>
       )}
 
-      {!loading && error !== null && (
-        <div className="h-52 flex items-center justify-center text-red-400 text-sm px-4 text-center">
-          {error}
-        </div>
-      )}
-
-      {!loading && error === null && chartData.length === 0 && (
-        <div className="h-52 flex items-center justify-center text-slate-400 text-sm">
-          No chart data available
-        </div>
-      )}
-
-      {!loading && error === null && chartData.length > 0 && (
+      {!loading && (error === null || isDegradation) && chartData.length > 0 && (
         <ResponsiveContainer width="100%" height={220}>
           <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <defs>
