@@ -115,3 +115,97 @@ export const marketApi = {
   indicators: (symbol: string): Promise<TechnicalIndicators> =>
     api.get<TechnicalIndicators>(`/api/v1/market/indicators/${encodeURIComponent(symbol)}`),
 }
+
+// ---------------------------------------------------------------------------
+// Brokerage types
+// ---------------------------------------------------------------------------
+
+export type TradeSide = 'BUY' | 'SELL'
+
+export interface OrderRequest {
+  symbol: string
+  qty: number
+  side: TradeSide
+  order_type: 'market'
+}
+
+export interface OrderResponse {
+  id: string
+  symbol: string
+  side: TradeSide
+  qty: number
+  price: number
+  total_amount: number
+  status: string
+  source: string
+  executed_at: string | null
+  created_at: string
+}
+
+export interface PositionOut {
+  id: string
+  symbol: string
+  qty: number
+  avg_cost: number
+  current_price: number
+  market_value: number
+  unrealized_pnl: number
+  unrealized_pnl_pct: number
+}
+
+export interface PortfolioPositionsResponse {
+  portfolio_id: string
+  name: string
+  cash_balance: number
+  total_market_value: number
+  total_portfolio_value: number
+  total_unrealized_pnl: number
+  positions: PositionOut[]
+}
+
+export interface BalanceResponse {
+  portfolio_id: string
+  name: string
+  cash_balance: number
+  initial_balance: number
+}
+
+export interface TradeOut {
+  id: string
+  symbol: string
+  side: TradeSide
+  qty: number
+  price: number
+  total_amount: number
+  status: string
+  source: string
+  executed_at: string | null
+  created_at: string
+}
+
+export interface TradeHistoryResponse {
+  trades: TradeOut[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// ---------------------------------------------------------------------------
+// Brokerage API helpers
+// ---------------------------------------------------------------------------
+
+export const brokerageApi = {
+  placeOrder: (body: OrderRequest): Promise<OrderResponse> =>
+    api.post<OrderResponse>('/api/v1/brokerage/orders', body),
+
+  getPortfolio: (): Promise<PortfolioPositionsResponse> =>
+    api.get<PortfolioPositionsResponse>('/api/v1/brokerage/portfolio'),
+
+  getBalance: (): Promise<BalanceResponse> =>
+    api.get<BalanceResponse>('/api/v1/brokerage/balance'),
+
+  getTrades: (page: number = 1, pageSize: number = 20): Promise<TradeHistoryResponse> =>
+    api.get<TradeHistoryResponse>(
+      `/api/v1/brokerage/trades?page=${page}&page_size=${pageSize}`,
+    ),
+}
