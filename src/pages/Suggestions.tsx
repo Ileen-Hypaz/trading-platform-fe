@@ -1,6 +1,10 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorBanner } from '../components/ErrorBanner'
+import { SkeletonSignalCard, SkeletonWatchlistItem } from '../components/Skeleton'
 import { StockSearch } from '../components/StockSearch'
+import { useToast } from '../components/Toast'
 import {
+  ApiError,
   brokerageApi,
   signalsApi,
   watchlistApi,
@@ -89,6 +93,7 @@ interface TradeFormState {
   qty: string
   submitting: boolean
   error: string | null
+  errorType: 'error' | 'warning'
   result: OrderResponse | null
 }
 
@@ -97,7 +102,38 @@ const EMPTY_TRADE_FORM: TradeFormState = {
   qty: '1',
   submitting: false,
   error: null,
+  errorType: 'error',
   result: null,
+}
+
+// ---------------------------------------------------------------------------
+// Spinner
+// ---------------------------------------------------------------------------
+
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin h-4 w-4 text-current"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+      />
+    </svg>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +147,7 @@ interface SignalCardProps {
 
 function SignalCard({ signal, onDismiss }: SignalCardProps) {
   const [form, setForm] = useState<TradeFormState>(EMPTY_TRADE_FORM)
+  const { addToast } = useToast()
   const style = ACTION_STYLES[signal.action]
   const canTrade = signal.action === 'BUY' || signal.action === 'SELL'
 
@@ -121,7 +158,7 @@ function SignalCard({ signal, onDismiss }: SignalCardProps) {
   const handleExecute = async () => {
     const qty = parseFloat(form.qty)
     if (!Number.isFinite(qty) || qty <= 0) {
-      setForm((prev) => ({ ...prev, error: 'Enter a positive quantity.' }))
+      setForm((prev) => ({ ...prev, error: 'Enter a positive quantity.', errorType: 'error' }))
       return
     }
     setForm((prev) => ({ ...prev, submitting: true, error: null }))
@@ -133,12 +170,34 @@ function SignalCard({ signal, onDismiss }: SignalCardProps) {
         order_type: 'market',
       })
       setForm((prev) => ({ ...prev, submitting: false, result }))
+      addToast({
+        type: 'success',
+        title: 'Trade Executed',
+        message: `${result.side} ${result.qty.toLocaleString()} × ${result.symbol} @ ${formatCurrency(result.price)}`,
+      })
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Order failed.'
+      const isGuardrail = err instanceof ApiError && err.isGuardrailViolation
       setForm((prev) => ({
         ...prev,
         submitting: false,
-        error: err instanceof Error ? err.message : 'Order failed.',
+        error: message,
+        errorType: isGuardrail ? 'warning' : 'error',
       }))
+      if (isGuardrail) {
+        addToast({
+          type: 'warning',
+          title: 'Guardrail Triggered',
+          message,
+          duration: 7000,
+        })
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Trade Failed',
+          message,
+        })
+      }
     }
   }
 
@@ -210,12 +269,13 @@ function SignalCard({ signal, onDismiss }: SignalCardProps) {
             <button
               onClick={() => void handleExecute()}
               disabled={form.submitting}
-              className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
                 signal.action === 'BUY'
                   ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                   : 'bg-red-600 hover:bg-red-500 text-white'
               }`}
             >
+              {form.submitting && <Spinner />}
               {form.submitting ? 'Placing…' : `Confirm ${signal.action}`}
             </button>
             <button
@@ -226,7 +286,13 @@ function SignalCard({ signal, onDismiss }: SignalCardProps) {
               Cancel
             </button>
           </div>
-          {form.error && <p className="mt-2 text-red-400 text-xs">{form.error}</p>}
+          {form.error && (
+            <ErrorBanner
+              type={form.errorType}
+              message={form.error}
+              className="mt-3"
+            />
+          )}
         </div>
       ) : null}
 
@@ -343,20 +409,20 @@ function WatchlistManager({
       {addError && <p className="mb-3 text-red-400 text-xs">{addError}</p>}
 
       {error && (
-        <div className="mb-3 px-3 py-2 bg-red-900/40 border border-red-700/40 rounded-lg text-red-300 text-xs">
-          {error}
-        </div>
+        <ErrorBanner type="error" message={error} className="mb-3" />
       )}
 
       {removeError && (
-        <div className="mb-3 px-3 py-2 bg-red-900/40 border border-red-700/40 rounded-lg text-red-300 text-xs">
-          {removeError}
-        </div>
+        <ErrorBanner type="error" message={removeError} className="mb-3" />
       )}
 
       <div className="mt-4">
         {loading ? (
-          <p className="text-slate-500 text-sm">Loading…</p>
+          <ul className="divide-y divide-surface-border">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <SkeletonWatchlistItem key={i} />
+            ))}
+          </ul>
         ) : watchlist.length === 0 ? (
           <p className="text-slate-500 text-sm">
             Your watchlist is empty. Search above to add symbols.
@@ -388,38 +454,48 @@ function WatchlistManager({
 }
 
 // ---------------------------------------------------------------------------
-// Spinner
+// Empty state for signals panel
 // ---------------------------------------------------------------------------
 
-function Spinner() {
+function EmptySignals({ hasWatchlistItems }: { hasWatchlistItems: boolean }) {
   return (
-    <svg
-      className="animate-spin h-4 w-4 text-current"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
+    <div className="bg-surface-card border border-surface-border rounded-xl px-6 py-14 text-center">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-10 w-10 text-slate-600 mx-auto mb-4"
+        viewBox="0 0 24 24"
+        fill="none"
         stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-      />
-    </svg>
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M9.663 17h4.673M12 3v1m6.364 1.636-.707.707M21 12h-1M4 12H3m3.343-5.657-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547Z" />
+      </svg>
+      <p className="text-slate-300 font-medium text-sm mb-2">No AI Signals Yet</p>
+      {hasWatchlistItems ? (
+        <p className="text-slate-500 text-xs max-w-xs mx-auto leading-relaxed">
+          Click{' '}
+          <span className="text-white font-semibold">Refresh Signals</span> to generate
+          AI-powered trading recommendations for your watchlist.
+        </p>
+      ) : (
+        <p className="text-slate-500 text-xs max-w-xs mx-auto leading-relaxed">
+          Add symbols to your watchlist using the panel on the right, then click{' '}
+          <span className="text-white font-semibold">Refresh Signals</span> to generate
+          AI-powered trading recommendations.
+        </p>
+      )}
+    </div>
   )
 }
 
 // ---------------------------------------------------------------------------
 // Suggestions page
 // ---------------------------------------------------------------------------
+
+const SKELETON_SIGNAL_COUNT = 3
 
 export function Suggestions() {
   const [signals, setSignals] = useState<SignalOut[]>([])
@@ -431,8 +507,11 @@ export function Suggestions() {
   const [refreshing, setRefreshing] = useState(false)
 
   const [signalsError, setSignalsError] = useState<string | null>(null)
+  const [signalsErrorType, setSignalsErrorType] = useState<'error' | 'warning'>('error')
   const [watchlistError, setWatchlistError] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+
+  const { addToast } = useToast()
 
   // -------------------------------------------------------------------------
   // Fetchers
@@ -444,7 +523,10 @@ export function Suggestions() {
       setSignals(data.signals)
       setSignalsError(null)
     } catch (err) {
-      setSignalsError(err instanceof Error ? err.message : 'Failed to load signals.')
+      const message = err instanceof Error ? err.message : 'Failed to load signals.'
+      const isDegradation = err instanceof ApiError && err.isDegradation
+      setSignalsError(message)
+      setSignalsErrorType(isDegradation ? 'warning' : 'error')
     } finally {
       setLoadingSignals(false)
     }
@@ -468,12 +550,11 @@ export function Suggestions() {
   }, [fetchSignals, fetchWatchlist])
 
   // -------------------------------------------------------------------------
-  // Refresh signals — generate for all watchlist symbols then reload
+  // Refresh signals — generate for all watchlist + portfolio symbols
   // -------------------------------------------------------------------------
 
   const handleRefreshSignals = async () => {
     const watchlistSymbols = watchlist.map((w) => w.symbol)
-    // Union of watchlist + open portfolio positions — both sets need fresh signals.
     const symbols = await collectAllSymbols(watchlistSymbols)
     if (symbols.length === 0) {
       setRefreshError('Add symbols to your watchlist before generating signals.')
@@ -485,7 +566,17 @@ export function Suggestions() {
       await signalsApi.generate(symbols)
       await fetchSignals()
     } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : 'Signal generation failed.')
+      const message = err instanceof Error ? err.message : 'Signal generation failed.'
+      const isDegradation = err instanceof ApiError && err.isDegradation
+      setRefreshError(message)
+      addToast({
+        type: 'warning',
+        title: 'AI Signals Unavailable',
+        message: isDegradation
+          ? 'The AI service is temporarily unavailable. Try again in a few moments.'
+          : message,
+        duration: 7000,
+      })
     } finally {
       setRefreshing(false)
     }
@@ -547,9 +638,7 @@ export function Suggestions() {
       </div>
 
       {refreshError && (
-        <div className="mb-4 px-4 py-2.5 bg-red-900/40 border border-red-700/40 rounded-lg text-red-300 text-sm">
-          {refreshError}
-        </div>
+        <ErrorBanner type="warning" message={refreshError} className="mb-4" />
       )}
 
       {/* Two-column layout: signals left, watchlist sidebar right */}
@@ -568,24 +657,25 @@ export function Suggestions() {
           </div>
 
           {signalsError && (
-            <div className="mb-3 px-4 py-2.5 bg-red-900/40 border border-red-700/40 rounded-lg text-red-300 text-sm">
-              {signalsError}
-            </div>
+            <ErrorBanner
+              type={signalsErrorType}
+              message={
+                signalsErrorType === 'warning'
+                  ? `AI signal service degraded: ${signalsError}`
+                  : signalsError
+              }
+              className="mb-3"
+            />
           )}
 
           {loadingSignals ? (
-            <div className="flex items-center justify-center py-16 text-slate-500 gap-2">
-              <Spinner />
-              <span className="text-sm">Loading signals…</span>
+            <div className="flex flex-col gap-4">
+              {Array.from({ length: SKELETON_SIGNAL_COUNT }).map((_, i) => (
+                <SkeletonSignalCard key={i} />
+              ))}
             </div>
           ) : visibleSignals.length === 0 ? (
-            <div className="bg-surface-card border border-surface-border rounded-xl px-6 py-12 text-center">
-              <p className="text-slate-400 text-sm leading-relaxed">
-                No signals yet. Add symbols to your watchlist and click{' '}
-                <span className="text-white font-semibold">Refresh Signals</span> to generate
-                AI-powered trading recommendations.
-              </p>
-            </div>
+            <EmptySignals hasWatchlistItems={watchlist.length > 0} />
           ) : (
             <div className="flex flex-col gap-4">
               {visibleSignals.map((signal) => (
