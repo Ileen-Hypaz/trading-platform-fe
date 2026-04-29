@@ -1,5 +1,28 @@
 const BASE_URL = import.meta.env['VITE_API_URL'] ?? ''
 
+// API key for application-level Bearer authentication.
+// When set, this token is injected on every mutating request so the backend's
+// require_api_key dependency is satisfied.
+//
+// Production security model:
+//   - Primary boundary: Cloud Run / IAP enforces Google-signed OIDC authentication
+//     at the infrastructure level before any request reaches this service.
+//   - Secondary boundary: APP_AUTH_ENABLED + APP_API_KEY adds an application-level
+//     Bearer token check on all mutation endpoints.
+//   - VITE_API_KEY should be provided via Cloud Run environment variables, never
+//     committed to source control.
+const _apiKey: string = import.meta.env['VITE_API_KEY'] ?? ''
+
+// ---------------------------------------------------------------------------
+// 401 handler hook — stub for future OAuth / Firebase integration
+// ---------------------------------------------------------------------------
+// Replace this no-op with a redirect to /login or a token-refresh flow when
+// an auth provider (Firebase, Google OAuth, etc.) is wired up.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _handle401(_response: Response): void {
+  // Future: trigger token refresh or redirect to login page.
+}
+
 // ---------------------------------------------------------------------------
 // ApiError — richer error type that carries HTTP status + backend error code
 // ---------------------------------------------------------------------------
@@ -51,15 +74,24 @@ async function parseErrorBody(response: Response): Promise<{ message: string; er
   return { message, errorCode }
 }
 
+function _authHeaders(): Record<string, string> {
+  if (_apiKey) {
+    return { Authorization: `Bearer ${_apiKey}` }
+  }
+  return {}
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ..._authHeaders(),
       ...options?.headers,
     },
     ...options,
   })
   if (!response.ok) {
+    if (response.status === 401) _handle401(response)
     const { message, errorCode } = await parseErrorBody(response)
     throw new ApiError(response.status, message, errorCode)
   }
@@ -70,11 +102,13 @@ async function requestNoContent(path: string, options?: RequestInit): Promise<vo
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ..._authHeaders(),
       ...options?.headers,
     },
     ...options,
   })
   if (!response.ok) {
+    if (response.status === 401) _handle401(response)
     const { message, errorCode } = await parseErrorBody(response)
     throw new ApiError(response.status, message, errorCode)
   }
@@ -333,6 +367,11 @@ export interface SignalOut {
   price_at_signal: number
   model_id: string
   generated_at: string
+  // Optional observability fields (populated when available after migration 005)
+  snapshot_id?: string
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_tokens?: number
 }
 
 export interface LatestSignalsResponse {

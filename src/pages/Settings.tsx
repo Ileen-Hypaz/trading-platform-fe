@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+// FormEvent kept for the broker form handler; useState kept for other panels.
 import { ErrorBanner } from '../components/ErrorBanner'
 import { SkeletonLine, SkeletonTableRow } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
@@ -697,14 +698,16 @@ function ActivityLogPanel() {
 // ---------------------------------------------------------------------------
 
 export function Settings() {
-  const [brokerSaved, setBrokerSaved] = useState(false)
   const { addToast } = useToast()
 
   function handleBrokerSave(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    setBrokerSaved(true)
-    addToast({ type: 'success', title: 'Settings Saved', message: 'Broker configuration updated.' })
-    setTimeout(() => setBrokerSaved(false), 2000)
+    addToast({
+      type: 'warning',
+      title: 'Not Implemented',
+      message:
+        'Broker mode is controlled by the BROKER_TYPE environment variable. Changes here are not saved.',
+    })
   }
 
   return (
@@ -715,25 +718,58 @@ export function Settings() {
       <GuardrailRulesPanel />
       <ActivityLogPanel />
 
-      {/* Broker Configuration */}
+      {/* Broker Configuration — display-only placeholder */}
       <form onSubmit={handleBrokerSave}>
         <section className="bg-surface-card border border-surface-border rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Broker Configuration</h3>
-          <div className="space-y-4">
+          <h3 className="text-base font-semibold text-white mb-3">Broker Configuration</h3>
+
+          {/* Non-functional banner */}
+          <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-900/30 border border-amber-700 rounded-lg">
+            <svg
+              className="shrink-0 mt-0.5 h-5 w-5 text-amber-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth="1.5"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+              />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-amber-300">Not yet implemented</p>
+              <p className="text-xs text-amber-400/80 mt-0.5">
+                Broker mode is controlled by the{' '}
+                <code className="font-mono bg-amber-900/40 px-1 rounded">BROKER_TYPE</code>{' '}
+                environment variable. Configuration changes made here are{' '}
+                <strong>not persisted to the backend</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4 opacity-60 pointer-events-none select-none">
             <div>
               <label className="block text-sm text-slate-400 mb-1">Broker Mode</label>
-              <select className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500">
+              <select
+                disabled
+                className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white cursor-not-allowed"
+              >
                 <option value="paper">Paper Trading</option>
                 <option value="alpaca">Alpaca</option>
               </select>
             </div>
           </div>
+
           <div className="mt-4">
             <button
               type="submit"
-              className="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
+              className="px-5 py-2.5 bg-surface-border text-slate-400 text-sm font-medium rounded-lg cursor-not-allowed"
+              title="Broker configuration is managed via environment variables"
             >
-              {brokerSaved ? 'Saved!' : 'Save Settings'}
+              Save Settings (disabled)
             </button>
           </div>
         </section>
